@@ -10,12 +10,14 @@ Usage:
 """
 
 import time
+import uuid
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from langchain.tools import tool
 from langchain.agents import create_agent
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langgraph.checkpoint.memory import InMemorySaver
 
 from retrieve import retrieve
 
@@ -79,7 +81,8 @@ def build_agent():
     # with_fallbacks: if primary hits a rate limit (429), LangChain automatically
     # retries the same call on the fallback model.
     llm = primary.with_fallbacks([fallback])
-    return create_agent(llm, tools=[search_notes], system_prompt=SYSTEM_PROMPT)
+    return create_agent(llm, tools=[search_notes], system_prompt=SYSTEM_PROMPT,
+                        checkpointer=InMemorySaver())
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +92,7 @@ def build_agent():
 def run() -> None:
     print("Loading models (first query may take ~30s)...")
     agent = build_agent()
+    config = {"configurable": {"thread_id": str(uuid.uuid4())}}
     print("RAG Agent ready. Type your question (Ctrl+C or 'quit' to exit).\n")
 
     while True:
@@ -109,6 +113,7 @@ def run() -> None:
 
             for token, metadata in agent.stream(
                 {"messages": [{"role": "user", "content": query}]},
+                config=config,
                 stream_mode="messages",
             ):
                 node = metadata.get("langgraph_node")
