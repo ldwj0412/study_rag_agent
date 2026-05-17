@@ -9,21 +9,32 @@ Usage:
     python agent.py
 """
 
+import sqlite3
 import time
 import uuid
+from typing import TypedDict
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from langchain.tools import tool
+from langchain.tools import tool, ToolRuntime
 from langchain.agents import create_agent
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.store.sqlite import SqliteStore
 
 from retrieve import retrieve
 
 load_dotenv()
 
 _genai_client = genai.Client()
+
+
+# ---------------------------------------------------------------------------
+# Context schema — carries user_id into tools via runtime.context
+# ---------------------------------------------------------------------------
+
+class Context(TypedDict):
+    user_id: str
 
 # ---------------------------------------------------------------------------
 # Query expansion — mirrors generate.py exactly
@@ -51,6 +62,24 @@ def _expand_query(query: str, client: genai.Client) -> str:
 # ---------------------------------------------------------------------------
 
 @tool
+def save_memory(memory: str, runtime: ToolRuntime[Context]) -> str:
+    """Save a fact or insight worth remembering for future sessions."""
+    user_id = runtime.context.get("user_id", "default") if runtime.context else "default"
+    runtime.store.put(("memories", user_id), memory[:60], {"text": memory})
+    return "Saved."
+
+
+@tool
+def load_memories(runtime: ToolRuntime[Context]) -> str:
+    """Load all previously saved memories for the current user."""
+    user_id = runtime.context.get("user_id", "default") if runtime.context else "default"
+    items = runtime.store.search(("memories", user_id))
+    if not items:
+        return "No memories saved yet."
+    return "\n".join(f"- {item.value['text']}" for item in items)
+
+
+@tool
 def search_notes(query: str) -> str:
     """Search university lecture notes to find information relevant to the query."""
     expanded = _expand_query(query, _genai_client)
@@ -71,18 +100,49 @@ def search_notes(query: str) -> str:
 SYSTEM_PROMPT = (
     "You are an assistant that answers questions about university lecture notes. "
     "Use the search_notes tool to retrieve relevant content before answering. "
-    "Be concise and cite sources (filename + page number) in your answer."
+    "Be concise and cite sources (filename + page number) in your answer. "
+    "When the user asks you to remember something, call save_memory. "
+    "At the start of each session, call load_memories to recall what you know about the user."
 )
 
 
-def build_agent():
+def _list_threads(conn: sqlite3.Connection) -> list[dict]:
+    """Return saved threads sorted newest-first, with a preview of the first user message."""
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    from langchain_core.messages import HumanMessage
+    saver = SqliteSaver(conn)
+    # group by thread_id, keep only the latest checkpoint per thread
+    seen: set[str] = set()
+    threads = []
+    for cp in saver.list(config=None):
+        tid = cp.config["configurable"]["thread_id"]
+        if tid in seen:
+            continue
+        seen.add(tid)
+        preview = "(empty)"
+        msgs = cp.checkpoint.get("channel_values", {}).get("messages", [])
+        first = next((m for m in msgs if isinstance(m, HumanMessage)), None)
+        if first:
+            text = first.content if isinstance(first.content, str) else str(first.content)
+            preview = text[:60] + ("…" if len(text) > 60 else "")
+        threads.append({"thread_id": tid, "preview": preview})
+    return threads
+
+
+def build_agent(cp_conn: sqlite3.Connection, store: SqliteStore):
     primary  = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", temperature=0.2)
     fallback = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0.2)
     # with_fallbacks: if primary hits a rate limit (429), LangChain automatically
     # retries the same call on the fallback model.
     llm = primary.with_fallbacks([fallback])
-    return create_agent(llm, tools=[search_notes], system_prompt=SYSTEM_PROMPT,
-                        checkpointer=InMemorySaver())
+    return create_agent(
+        llm,
+        tools=[search_notes, save_memory, load_memories],
+        system_prompt=SYSTEM_PROMPT,
+        checkpointer=SqliteSaver(cp_conn),
+        store=store,
+        context_schema=Context,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -91,9 +151,18 @@ def build_agent():
 
 def run() -> None:
     print("Loading models (first query may take ~30s)...")
-    agent = build_agent()
-    config = {"configurable": {"thread_id": str(uuid.uuid4())}}
-    print("RAG Agent ready. Type your question (Ctrl+C or 'quit' to exit).\n")
+    cp_conn = sqlite3.connect("index/checkpoints.db", check_same_thread=False, isolation_level=None)
+    store = SqliteStore(sqlite3.connect("index/memory.db", check_same_thread=False, isolation_level=None))
+    store.setup()
+    agent = build_agent(cp_conn, store)
+    config = {
+        "configurable": {
+            "thread_id": str(uuid.uuid4()),
+            "context": {"user_id": "default"},
+        }
+    }
+    print("RAG Agent ready. Type your question (Ctrl+C or 'quit' to exit).")
+    print("Commands: /threads  /resume <n>  /new\n")
 
     while True:
         try:
@@ -104,6 +173,33 @@ def run() -> None:
 
         if not query or query.lower() in {"quit", "exit"}:
             break
+
+        if query.startswith("/"):
+            parts = query.split()
+            cmd = parts[0]
+            if cmd == "/threads":
+                threads = _list_threads(cp_conn)
+                if not threads:
+                    print("No saved threads.\n")
+                else:
+                    for i, t in enumerate(threads, 1):
+                        active = " <- active" if t["thread_id"] == config["configurable"]["thread_id"] else ""
+                        print(f"  {i}. {t['preview']}{active}")
+                    print()
+            elif cmd == "/resume" and len(parts) == 2 and parts[1].isdigit():
+                threads = _list_threads(cp_conn)
+                idx = int(parts[1]) - 1
+                if 0 <= idx < len(threads):
+                    config["configurable"]["thread_id"] = threads[idx]["thread_id"]
+                    print(f"Resumed thread {idx + 1}: {threads[idx]['preview']}\n")
+                else:
+                    print(f"Invalid number. Use /threads to list.\n")
+            elif cmd == "/new":
+                config["configurable"]["thread_id"] = str(uuid.uuid4())
+                print("Started new thread.\n")
+            else:
+                print("Commands: /threads  /resume <n>  /new\n")
+            continue
 
         try:
             t_query = time.perf_counter()
