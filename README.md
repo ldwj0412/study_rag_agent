@@ -1,16 +1,20 @@
 # Personal RAG System
 
-A retrieval-augmented generation (RAG) pipeline that answers questions from university lecture notes (PDFs).
+A retrieval-augmented generation (RAG) system that answers questions from university lecture notes (PDFs). Includes two interfaces: a fixed pipeline (`main.py`) and a LangChain agent (`agent.py`).
 
 ## Architecture
 
+### Pipeline (`main.py`)
 ```
 Question → Query Expansion → Hybrid Retrieval → Reranking → Generation → Answer
 ```
 
 1. **Ingest** — Parse PDFs page by page, embed each slide with BGE-M3, store in ChromaDB. Build a BM25 index for keyword search. Incremental: only re-embeds changed files.
 2. **Retrieve** — Expand query to lecture terminology, run dense + BM25 search, fuse with RRF, rerank top 20 with a cross-encoder.
-3. **Generate** — Pass top 5 chunks as context to Gemini 2.5 Flash, answer using only the notes.
+3. **Generate** — Pass top 5 chunks as context to Gemini, answer using only the notes.
+
+### Agent (`agent.py`)
+A LangChain ReAct agent that decides when to search the notes. Skips retrieval for simple/off-topic questions, can issue multiple searches for complex ones. Uses the same hybrid retriever under the hood.
 
 ## Tech Stack
 
@@ -22,7 +26,8 @@ Question → Query Expansion → Hybrid Retrieval → Reranking → Generation �
 | Sparse retrieval | BM25 (rank-bm25) |
 | Fusion | Reciprocal Rank Fusion (RRF) |
 | Reranker | BAAI/bge-reranker-base (local) |
-| Generation | Google Gemini 2.5 Flash |
+| Generation | Gemini 2.5 Flash → 3.1 Flash Lite (fallback) |
+| Agent framework | LangChain `create_agent` |
 
 ## Setup
 
@@ -52,8 +57,11 @@ mkdir data
 # 2. Build the index
 python ingest.py
 
-# 3. Start the Q&A loop
+# 3a. Fixed pipeline
 python main.py
+
+# 3b. Agent (LangChain ReAct)
+python agent.py
 ```
 
 Incremental ingest — re-run `python ingest.py` after adding or changing PDFs. Only modified files are re-embedded.
@@ -71,6 +79,7 @@ personal_rag/
 ├── ingest.py           # PDF → chunks → embeddings → index
 ├── retrieve.py         # Hybrid search + reranking
 ├── generate.py         # Query expansion + LLM generation
-├── main.py             # Interactive Q&A loop
+├── main.py             # Interactive Q&A loop (fixed pipeline)
+├── agent.py            # LangChain ReAct agent
 └── requirements.txt
 ```
