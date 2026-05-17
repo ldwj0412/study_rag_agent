@@ -5,11 +5,24 @@ A retrieval-augmented generation (RAG) agent that answers questions from your st
 ## Architecture
 
 ### Agent (`agent.py`) — primary interface
+
+Follows the **ReAct** (Reason → Act → Observe) loop:
+
 ```
-Question → [Agent decides] → Query Expansion → Hybrid Retrieval → Reranking → Streaming Answer
+User query
+    ↓
+① REASON — LLM decides what to do next
+    ↓ (needs notes)          ↓ (simple / off-topic)
+② ACT — call search_notes    → Answer directly
+    ↓
+   Query expansion → Hybrid retrieval → Top 5 chunks
+    ↓
+③ OBSERVE — LLM reads chunks, reasons again (back to ①)
+    ↓ (has enough context)
+   Streaming answer with citations
 ```
 
-A LangChain ReAct agent built on Gemini. On each query it decides whether to call the `search_notes` tool (skips it for off-topic questions, calls it multiple times for complex ones). The answer streams token-by-token with per-query latency timing printed inline.
+The loop repeats until the LLM decides it has enough context. In practice the hybrid retriever surfaces relevant chunks in one call, so the loop exits after a single iteration. Multi-call behaviour kicks in only if the first search returns nothing useful.
 
 ### Fixed Pipeline (`main.py`)
 ```
