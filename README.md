@@ -24,6 +24,8 @@ User query
 
 The loop repeats until the LLM decides it has enough context. In practice the hybrid retriever surfaces relevant chunks in one call, so the loop exits after a single iteration. Multi-call behaviour kicks in only if the first search returns nothing useful.
 
+**Conversational memory** — each session maintains a message history via `InMemorySaver` (LangChain's recommended short-term memory checkpointer). Follow-up questions like "what are its disadvantages?" or "explain that more simply" work without re-stating context. History resets on restart.
+
 ### Fixed Pipeline (`main.py`)
 ```
 Question → Query Expansion → Hybrid Retrieval → Reranking → Generation → Answer
