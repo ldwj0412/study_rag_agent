@@ -101,6 +101,7 @@ SYSTEM_PROMPT = (
     "You are an assistant that answers questions about university lecture notes. "
     "Use the search_notes tool to retrieve relevant content before answering. "
     "Be concise and cite sources (filename + page number) in your answer. "
+    "If search_notes returns no relevant results, say 'I couldn't find this in your notes' and stop — do NOT answer from your own training knowledge. "
     "When the user asks you to remember something, call save_memory. "
     "At the start of each session, call load_memories to recall what you know about the user."
 )
