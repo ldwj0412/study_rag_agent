@@ -1,10 +1,17 @@
-# Personal RAG System
+# Lecture RAG Agent
 
-A retrieval-augmented generation (RAG) system that answers questions from university lecture notes (PDFs). Includes two interfaces: a fixed pipeline (`main.py`) and a LangChain agent (`agent.py`).
+A retrieval-augmented generation (RAG) agent that answers questions from university lecture notes (PDFs). The main interface is a LangChain ReAct agent (`agent.py`) that decides when to search, can issue multiple searches for complex questions, and streams the answer token-by-token. A simpler fixed pipeline (`main.py`) is also included.
 
 ## Architecture
 
-### Pipeline (`main.py`)
+### Agent (`agent.py`) — primary interface
+```
+Question → [Agent decides] → Query Expansion → Hybrid Retrieval → Reranking → Streaming Answer
+```
+
+A LangChain ReAct agent built on Gemini. On each query it decides whether to call the `search_notes` tool (skips it for off-topic questions, calls it multiple times for complex ones). The answer streams token-by-token with per-query latency timing printed inline.
+
+### Fixed Pipeline (`main.py`)
 ```
 Question → Query Expansion → Hybrid Retrieval → Reranking → Generation → Answer
 ```
@@ -12,9 +19,6 @@ Question → Query Expansion → Hybrid Retrieval → Reranking → Generation �
 1. **Ingest** — Parse PDFs page by page, embed each slide with BGE-M3, store in ChromaDB. Build a BM25 index for keyword search. Incremental: only re-embeds changed files.
 2. **Retrieve** — Expand query to lecture terminology, run dense + BM25 search, fuse with RRF, rerank top 20 with a cross-encoder.
 3. **Generate** — Pass top 5 chunks as context to Gemini, answer using only the notes.
-
-### Agent (`agent.py`)
-A LangChain ReAct agent that decides when to search the notes. Skips retrieval for simple/off-topic questions, can issue multiple searches for complex ones. Uses the same hybrid retriever under the hood.
 
 ## Tech Stack
 
@@ -26,7 +30,7 @@ A LangChain ReAct agent that decides when to search the notes. Skips retrieval f
 | Sparse retrieval | BM25 (rank-bm25) |
 | Fusion | Reciprocal Rank Fusion (RRF) |
 | Reranker | BAAI/bge-reranker-base (local) |
-| Generation | Gemini 2.5 Flash → 3.1 Flash Lite (fallback) |
+| Generation | Gemini 3.1 Flash Lite → 2.5 Flash Lite (fallback) |
 | Agent framework | LangChain `create_agent` |
 
 ## Setup
@@ -57,11 +61,11 @@ mkdir data
 # 2. Build the index
 python ingest.py
 
-# 3a. Fixed pipeline
-python main.py
-
-# 3b. Agent (LangChain ReAct)
+# 3a. Agent (LangChain ReAct) — recommended
 python agent.py
+
+# 3b. Fixed pipeline
+python main.py
 ```
 
 Incremental ingest — re-run `python ingest.py` after adding or changing PDFs. Only modified files are re-embedded.
@@ -69,7 +73,7 @@ Incremental ingest — re-run `python ingest.py` after adding or changing PDFs. 
 ## Project Structure
 
 ```
-personal_rag/
+lecture-rag-agent/
 ├── data/               # PDF lecture notes (gitignored)
 ├── index/              # Generated index files (gitignored)
 │   ├── chroma/         # ChromaDB vector store
@@ -80,6 +84,6 @@ personal_rag/
 ├── retrieve.py         # Hybrid search + reranking
 ├── generate.py         # Query expansion + LLM generation
 ├── main.py             # Interactive Q&A loop (fixed pipeline)
-├── agent.py            # LangChain ReAct agent
+├── agent.py            # LangChain ReAct agent (primary)
 └── requirements.txt
 ```
