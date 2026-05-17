@@ -24,7 +24,18 @@ User query
 
 The loop repeats until the LLM decides it has enough context. In practice the hybrid retriever surfaces relevant chunks in one call, so the loop exits after a single iteration. Multi-call behaviour kicks in only if the first search returns nothing useful.
 
-**Conversational memory** — each session maintains a message history via `InMemorySaver` (LangChain's recommended short-term memory checkpointer). Follow-up questions like "what are its disadvantages?" or "explain that more simply" work without re-stating context. History resets on restart.
+**Conversational memory (two-tier)**
+
+- **Short-term (per-thread)** — `SqliteSaver` persists every message to `index/checkpoints.db`. Each run starts a new thread (fresh UUID) by default, so follow-up questions like "what are its disadvantages?" or "explain that more simply" work without re-stating context. Threads survive restarts and can be resumed later.
+- **Long-term (cross-session)** — `SqliteStore` persists user-saved facts to `index/memory.db`. When you ask the agent to remember something it calls `save_memory`; on every session start it calls `load_memories` and primes itself with those facts automatically.
+
+**Slash commands** — type at the `You:` prompt before your question:
+
+| Command | Effect |
+|---|---|
+| `/threads` | List all saved conversation threads with a preview of the first message |
+| `/resume <n>` | Switch to thread n from the list and continue that conversation |
+| `/new` | Start a fresh thread (default on startup) |
 
 ### Fixed Pipeline (`main.py`)
 ```
@@ -47,6 +58,8 @@ Question → Query Expansion → Hybrid Retrieval → Reranking → Generation �
 | Reranker | BAAI/bge-reranker-base (local) |
 | Generation | Gemini 3.1 Flash Lite → 2.5 Flash Lite (fallback) |
 | Agent framework | LangChain `create_agent` |
+| Short-term memory | SqliteSaver (langgraph-checkpoint-sqlite) |
+| Long-term memory | SqliteStore (langgraph-checkpoint-sqlite) |
 
 ## Setup
 
@@ -94,7 +107,9 @@ study-rag-agent/
 │   ├── chroma/         # ChromaDB vector store
 │   ├── bm25_corpus.pkl # BM25 tokenized corpus
 │   ├── corpus_ids.pkl  # BM25 position → ChromaDB ID mapping
-│   └── manifest.json   # SHA-256 manifest for incremental ingest
+│   ├── manifest.json   # SHA-256 manifest for incremental ingest
+│   ├── checkpoints.db  # SqliteSaver conversation threads
+│   └── memory.db       # SqliteStore long-term facts
 ├── ingest.py           # PDF → chunks → embeddings → index
 ├── retrieve.py         # Hybrid search + reranking
 ├── generate.py         # Query expansion + LLM generation
