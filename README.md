@@ -8,18 +8,19 @@ A retrieval-augmented generation (RAG) agent that answers questions from your st
 
 Follows the **ReAct** (Reason → Act → Observe) loop:
 
-```
-User query
-    ↓
-① REASON — LLM decides what to do next
-    ↓ (needs notes)          ↓ (simple / off-topic)
-② ACT — call search_notes    → Answer directly
-    ↓
-   Query expansion → Hybrid retrieval → Top 5 chunks
-    ↓
-③ OBSERVE — LLM reads chunks, reasons again (back to ①)
-    ↓ (has enough context)
-   Streaming answer with citations
+```mermaid
+flowchart TD
+    A["User query"] --> B["① REASON<br>Agent LLM decides next step<br>(gemini-3.1-flash-lite)"]
+    B -->|"Needs lecture content"| C["② ACT<br>search_notes tool"]
+    B -->|"Save/load memory"| M["② ACT<br>save_memory / load_memories"]
+    M --> G
+    C --> D["_expand_query()<br>(gemini-3.1-flash-lite)"]
+    D --> E["retrieve()<br>(BGE-M3 + BM25 + RRF + reranker)"]
+    E --> F["Top 5 chunks"]
+    F --> G["③ OBSERVE<br>Agent reads result"]
+    G --> B
+    B -->|"Has enough context"| H["Final answer with citations"]
+    B -->|"Simple / off-topic / not in notes"| H
 ```
 
 The loop repeats until the LLM decides it has enough context. In practice the hybrid retriever surfaces relevant chunks in one call, so the loop exits after a single iteration. Multi-call behaviour kicks in only if the first search returns nothing useful.
