@@ -30,12 +30,11 @@ load_dotenv()
 # Why .env and not hardcoding? API keys in source code get committed to git
 # accidentally. .env is in .gitignore so the key stays local.
 
-MODEL_NAME = "gemini-2.5-flash"
-# Why Gemini 1.5 Flash and not Pro?
-# Flash is free tier: 1500 requests/day, 1M tokens/min — more than enough
-# for personal use. Pro is more capable but has a much lower free quota.
-# For RAG over lecture notes, Flash is plenty — the retriever does the hard
-# work of finding relevant content; the LLM just synthesises it.
+MODEL_PRIMARY  = "gemini-2.5-flash"
+MODEL_FALLBACK = "gemini-3.1-flash-lite"
+# Primary: gemini-2.5-flash — faster, higher quality.
+# Fallback: gemini-3.1-flash-lite — higher RPD quota (500/day vs 20/day).
+# If the primary hits a 429 rate limit, the fallback is used automatically.
 
 TOP_K      = 5    # number of chunks to retrieve per query
 MAX_TOKENS = 1024 # max tokens in the generated answer
@@ -67,6 +66,20 @@ Rules:
 - Do not add information beyond what is in the context.
 """
 
+def _generate(client: genai.Client, prompt: str, **kwargs) -> str:
+    """Call Gemini with primary model, fall back to lite on 429."""
+    from google.genai.errors import ClientError
+    try:
+        r = client.models.generate_content(model=MODEL_PRIMARY, contents=prompt, **kwargs)
+        return r.text.strip()
+    except ClientError as e:
+        if e.code != 429:
+            raise
+        log.warning(f"Primary model rate-limited, falling back to {MODEL_FALLBACK}")
+        r = client.models.generate_content(model=MODEL_FALLBACK, contents=prompt, **kwargs)
+        return r.text.strip()
+
+
 def _expand_query(query: str, client: genai.Client) -> str:
     """
     Rewrite the user's conversational question into lecture-style terminology.
@@ -93,12 +106,10 @@ def _expand_query(query: str, client: genai.Client) -> str:
         f"Question: {query}\n"
         "Rewritten:"
     )
-    response = client.models.generate_content(
-        model=MODEL_NAME,
-        contents=prompt,
+    return _generate(
+        client, prompt,
         config=types.GenerateContentConfig(max_output_tokens=500, temperature=0.1),
     )
-    return response.text.strip()
 
 
 def _build_prompt(query: str, chunks: list[dict]) -> str:
@@ -186,20 +197,10 @@ def answer(query: str, top_k: int = TOP_K) -> dict:
     log.info(f"Prompt built ({len(prompt)} chars). Calling Gemini...")
 
     # Step 4: Generate
-    response = client.models.generate_content(
-        model=MODEL_NAME,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            max_output_tokens=MAX_TOKENS,
-            temperature=0.2,
-            # temperature=0.2: low randomness — we want factual, consistent
-            # answers grounded in the context, not creative paraphrasing.
-            # 0.0 would be fully deterministic; 0.2 allows slight variation
-            # in phrasing while staying accurate.
-        ),
+    answer_text = _generate(
+        client, prompt,
+        config=types.GenerateContentConfig(max_output_tokens=MAX_TOKENS, temperature=0.2),
     )
-
-    answer_text = response.text.strip()
     log.info("Answer generated.")
 
     # Step 4: Build source list for the caller
