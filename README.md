@@ -1,6 +1,6 @@
-# Lecture RAG Agent
+# Study RAG Agent
 
-A retrieval-augmented generation (RAG) agent that answers questions from university lecture notes (PDFs). The main interface is a LangChain ReAct agent (`agent.py`) that decides when to search, can issue multiple searches for complex questions, and streams the answer token-by-token. A simpler fixed pipeline (`main.py`) is also included.
+A retrieval-augmented generation (RAG) agent that answers questions from your study materials (PDFs). The main interface is a LangChain ReAct agent (`agent.py`) that decides when to search, can issue multiple searches for complex questions, and streams the answer token-by-token. A simpler fixed pipeline (`main.py`) is also included.
 
 ## Architecture
 
@@ -73,7 +73,7 @@ Incremental ingest — re-run `python ingest.py` after adding or changing PDFs. 
 ## Project Structure
 
 ```
-lecture-rag-agent/
+study-rag-agent/
 ├── data/               # PDF lecture notes (gitignored)
 ├── index/              # Generated index files (gitignored)
 │   ├── chroma/         # ChromaDB vector store
